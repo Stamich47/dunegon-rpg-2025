@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -8,12 +8,23 @@ import {
 } from "react-native";
 import * as RN from "react-native";
 import * as ROT from "rot-js";
+import createEngine from "./game/miniEngine";
+import mapModule from "./game/map";
 import Minimap from "./components/Minimap";
+import CommonStyles, { colors } from "./styles/common";
+import TileGrid from "./components/TileGrid";
+import DPad from "./components/DPad";
+import LegendOverlay from "./components/LegendOverlay";
+import InventoryOverlay from "./components/InventoryOverlay";
 
 export default function GameScreen({ onExit }) {
   const [tiles, setTiles] = useState([]);
   const [player, setPlayer] = useState(null);
   const [legendOpen, setLegendOpen] = useState(false);
+  const [invOpen, setInvOpen] = useState(false);
+  const [inventory, setInventory] = useState({ gold: 0 });
+  const pulseAnim = useRef(new RN.Animated.Value(0)).current;
+  const engineRef = useRef(null);
   // sections: screen is one section; there are 3x3 sections
   const VIEW_W = 10; // tiles per screen horizontally
   const VIEW_H = 10; // tiles per screen vertically
@@ -23,124 +34,148 @@ export default function GameScreen({ onExit }) {
   const SECTION_H = VIEW_H;
   const WIDTH = SECTION_W * SECTIONS_X; // total map width
   const HEIGHT = SECTION_H * SECTIONS_Y; // total map height
-
   useEffect(() => {
-    // generate a simple dungeon using rot-js Digger
-    const map = new ROT.Map.Digger(WIDTH, HEIGHT);
-    // start with all floors (walkable) and then add section walls
-    const _tiles = new Array(HEIGHT)
-      .fill(0)
-      .map(() => new Array(WIDTH).fill("."));
-    // still use rot-js to carve some variety but ensure floors remain '.' unless we place walls
-    map.create((x, y, value) => {
-      if (value !== 0) {
-        _tiles[y][x] = "."; // keep as floor
-      }
+    const result = mapModule.generateMap({
+      WIDTH,
+      HEIGHT,
+      SECTION_W,
+      SECTION_H,
+      SECTIONS_X,
+      SECTIONS_Y,
     });
-
-    // carve section-separating walls (thicker) with one opening per section edge
-    // 1-tile thick section walls with single doorway per edge; doorway position is randomized along the wall
-    const vBoundaries = [SECTION_W, SECTION_W * 2];
-    vBoundaries.forEach((bx) => {
-      for (let y = 0; y < HEIGHT; y++) {
-        _tiles[y][bx] = "#";
-      }
-      // one opening per section edge, randomized vertically within the section
-      for (let sy = 0; sy < SECTIONS_Y; sy++) {
-        // pick a random y inside the section but avoid horizontal boundary intersections
-        let oy;
-        let tries = 0;
-        do {
-          oy = sy * SECTION_H + Math.floor(Math.random() * SECTION_H);
-          tries++;
-        } while ((oy === SECTION_H || oy === SECTION_H * 2) && tries < 20);
-        if (oy >= 0 && oy < HEIGHT) _tiles[oy][bx] = "d";
-      }
-    });
-
-    const hBoundaries = [SECTION_H, SECTION_H * 2];
-    hBoundaries.forEach((by) => {
-      for (let x = 0; x < WIDTH; x++) {
-        _tiles[by][x] = "#";
-      }
-      // one opening per section edge, randomized horizontally within the section
-      for (let sx = 0; sx < SECTIONS_X; sx++) {
-        // pick a random x inside the section but avoid vertical boundary intersections
-        let ox;
-        let tries = 0;
-        do {
-          ox = sx * SECTION_W + Math.floor(Math.random() * SECTION_W);
-          tries++;
-        } while ((ox === SECTION_W || ox === SECTION_W * 2) && tries < 20);
-        if (ox >= 0 && ox < WIDTH) _tiles[by][ox] = "d";
-      }
-    });
-
-    // commit tiles to state
-    // place 4 red obstacles per section (symbol 'r') avoiding walls and openings
-    function placeRedObstacles() {
-      // build set of forbidden positions by scanning actual doorway tiles ('d') and adding their 3x3 areas
-      const forbidden = new Set();
-      for (let y = 0; y < HEIGHT; y++) {
-        for (let x = 0; x < WIDTH; x++) {
-          if (_tiles[y][x] === "d") {
-            for (let dx = -1; dx <= 1; dx++) {
-              for (let dy = -1; dy <= 1; dy++) {
-                const fx = x + dx;
-                const fy = y + dy;
-                if (fx >= 0 && fx < WIDTH && fy >= 0 && fy < HEIGHT)
-                  forbidden.add(`${fx},${fy}`);
-              }
-            }
-          }
-        }
-      }
-
-      for (let sx = 0; sx < SECTIONS_X; sx++) {
-        for (let sy = 0; sy < SECTIONS_Y; sy++) {
-          let placed = 0;
-          const startX = sx * SECTION_W;
-          const startY = sy * SECTION_H;
-          let tries = 0;
-          while (placed < 4 && tries < 500) {
-            const rx = startX + Math.floor(Math.random() * SECTION_W);
-            const ry = startY + Math.floor(Math.random() * SECTION_H);
-            if (
-              _tiles[ry] &&
-              _tiles[ry][rx] === "." &&
-              !forbidden.has(`${rx},${ry}`)
-            ) {
-              _tiles[ry][rx] = "r"; // red obstacle
-              placed++;
-            }
-            tries++;
-          }
-        }
-      }
-    }
-
-    placeRedObstacles();
-    setTiles(_tiles);
-
-    // spawn player near the center: search outward from center
-    const cx = Math.floor(WIDTH / 2);
-    const cy = Math.floor(HEIGHT / 2);
-    let spawned = false;
-    for (let r = 0; r < Math.max(WIDTH, HEIGHT) && !spawned; r++) {
-      for (let dy = -r; dy <= r && !spawned; dy++) {
-        for (let dx = -r; dx <= r && !spawned; dx++) {
-          const x = cx + dx;
-          const y = cy + dy;
-          if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
-            if (_tiles[y][x] === "." || _tiles[y][x] === "d") {
-              setPlayer({ x, y });
-              spawned = true;
-            }
-          }
-        }
-      }
-    }
+    setTiles(result.tiles);
+    if (result.spawn) setPlayer(result.spawn);
   }, []);
+
+  // --- mini engine wiring (non-destructive): create engine and mirror entities
+  useEffect(() => {
+    const engine = createEngine(120);
+
+    // register a system to detect player/chest overlap and perform pickup
+    engine.registerSystem((entitiesSnapshot) => {
+      const playerEnt = entitiesSnapshot.find((e) => e.type === "player");
+      if (!playerEnt) return;
+      const chests = entitiesSnapshot.filter((e) => e.type === "chest");
+      chests.forEach((g) => {
+        if (g.x === playerEnt.x && g.y === playerEnt.y) {
+          // pickup: increment inventory and remove chest entity
+          setInventory((inv) => ({
+            ...inv,
+            gold: (inv.gold || 0) + (g.amount || 1),
+          }));
+          engine.removeEntity(g.id);
+          // also clear tile in UI state
+          setTiles((prev) => {
+            const copy = prev.map((r) => r.slice());
+            if (copy[g.y] && copy[g.y][g.x] === "c") copy[g.y][g.x] = ".";
+            return copy;
+          });
+        }
+      });
+    });
+
+    engine.start();
+
+    // populate engine entities from current tiles + player
+    // create chest entities from tiles
+    const chestIds = [];
+    tiles.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        if (cell === "c") {
+          const amount = Math.floor(Math.random() * 10) + 1;
+          const cid = engine.addEntity({ type: "chest", x, y, amount });
+          chestIds.push(cid);
+        }
+      });
+    });
+
+    // player entity
+    let pid = null;
+    if (player) {
+      pid = engine.addEntity({ type: "player", x: player.x, y: player.y });
+    }
+
+    // expose engine to handlers
+    engineRef.current = engine;
+
+    // movement/intent system: consumes intents and moves player if valid
+    engine.registerSystem((entitiesSnapshot) => {
+      const intents = engine.consumeIntents();
+      if (!intents || intents.length === 0) return;
+      const playerEnt = entitiesSnapshot.find((e) => e.type === "player");
+      if (!playerEnt) return;
+      intents.forEach((it) => {
+        if (it.type === "move") {
+          const nx = playerEnt.x + it.dx;
+          const ny = playerEnt.y + it.dy;
+          if (nx < 0 || ny < 0 || nx >= WIDTH || ny >= HEIGHT) return;
+          const cell = tiles[ny] && tiles[ny][nx];
+          if (!cell) return;
+          if (cell === "." || cell === "d" || cell === "c") {
+            // move player entity
+            engine.updateEntity(playerEnt.id, { x: nx, y: ny });
+            setPlayer({ x: nx, y: ny });
+            if (cell === "c") {
+              // find chest entity at destination in the snapshot and remove it
+              const chestEnt = entitiesSnapshot.find(
+                (e) => e.type === "chest" && e.x === nx && e.y === ny
+              );
+              if (chestEnt) {
+                // award gold immediately
+                const amt = chestEnt.amount || 1;
+                setInventory((inv) => ({
+                  ...inv,
+                  gold: (inv.gold || 0) + amt,
+                }));
+                engine.removeEntity(chestEnt.id);
+              }
+              // clear tile visually
+              setTiles((prev) => {
+                const copy = prev.map((r) => r.slice());
+                if (copy[ny] && copy[ny][nx] === "c") copy[ny][nx] = ".";
+                return copy;
+              });
+            }
+          }
+        }
+      });
+    });
+
+    // watch player state and keep engine in sync (small sync loop)
+    const unwatch = setInterval(() => {
+      // pull latest player entity from engine and mirror to local state
+      const p = engine.getEntities().find((e) => e.type === "player");
+      if (p) setPlayer({ x: p.x, y: p.y });
+    }, 120);
+
+    // cleanup on unmount
+    return () => {
+      clearInterval(unwatch);
+      engine.stop();
+    };
+  }, [player, tiles]);
+
+  // smooth pulsing animation for gold tiles (placed after map init)
+  useEffect(() => {
+    const anim = RN.Animated.loop(
+      RN.Animated.sequence([
+        RN.Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: false,
+          easing: RN.Easing.inOut(RN.Easing.ease),
+        }),
+        RN.Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 800,
+          useNativeDriver: false,
+          easing: RN.Easing.inOut(RN.Easing.ease),
+        }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [pulseAnim]);
 
   // compute tileSize so the section fills the full window height (prioritize height)
   const { width: windowW, height: windowH } = Dimensions.get("window");
@@ -160,14 +195,9 @@ export default function GameScreen({ onExit }) {
   const miniHeight = HEIGHT * miniTile;
 
   function movePlayer(dx, dy) {
-    if (!player) return;
-    const nx = player.x + dx;
-    const ny = player.y + dy;
-    if (nx < 0 || nx >= WIDTH || ny < 0 || ny >= HEIGHT) return;
-    // respect walls: only move onto '.' floor tiles
-    if (tiles[ny] && (tiles[ny][nx] === "." || tiles[ny][nx] === "d")) {
-      setPlayer({ x: nx, y: ny });
-    }
+    // emit movement intent to engine (engine will validate and update)
+    if (engineRef.current)
+      engineRef.current.emitIntent({ type: "move", dx, dy });
   }
 
   // randomize the 4 red collidable tiles per section
@@ -206,6 +236,48 @@ export default function GameScreen({ onExit }) {
           if (ox >= 0 && ox < WIDTH) newTiles[by][ox] = "d";
         }
       });
+
+      // place one chest 'c' per section (avoid doorways 3x3)
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          if (newTiles[y][x] === "c") newTiles[y][x] = "."; // clear old chests
+        }
+      }
+      for (let sx = 0; sx < SECTIONS_X; sx++) {
+        for (let sy = 0; sy < SECTIONS_Y; sy++) {
+          let placed = false;
+          const startX = sx * SECTION_W;
+          const startY = sy * SECTION_H;
+          let tries = 0;
+          while (!placed && tries < 500) {
+            const gx = startX + Math.floor(Math.random() * SECTION_W);
+            const gy = startY + Math.floor(Math.random() * SECTION_H);
+            if (newTiles[gy] && newTiles[gy][gx] === ".") {
+              // ensure not inside doorway 3x3
+              let nearDoor = false;
+              for (let dx = -1; dx <= 1 && !nearDoor; dx++) {
+                for (let dy = -1; dy <= 1 && !nearDoor; dy++) {
+                  const fx = gx + dx;
+                  const fy = gy + dy;
+                  if (
+                    fx >= 0 &&
+                    fx < WIDTH &&
+                    fy >= 0 &&
+                    fy < HEIGHT &&
+                    newTiles[fy][fx] === "d"
+                  )
+                    nearDoor = true;
+                }
+              }
+              if (!nearDoor) {
+                newTiles[gy][gx] = "c";
+                placed = true;
+              }
+            }
+            tries++;
+          }
+        }
+      }
 
       // build forbidden set by scanning newTiles for actual doorway 'd' tiles
       const forbidden = new Set();
@@ -251,6 +323,42 @@ export default function GameScreen({ onExit }) {
     });
   }
 
+  // ensure player still on a walkable tile after randomize
+  useEffect(() => {
+    if (!player || tiles.length === 0) return;
+    const cell = tiles[player.y] && tiles[player.y][player.x];
+    if (!cell || (cell !== "." && cell !== "d" && cell !== "c")) {
+      // find nearest walkable tile by BFS
+      const q = [{ x: player.x, y: player.y }];
+      const seen = new Set([`${player.x},${player.y}`]);
+      const dirs = [
+        { x: 1, y: 0 },
+        { x: -1, y: 0 },
+        { x: 0, y: 1 },
+        { x: 0, y: -1 },
+      ];
+      let found = null;
+      while (q.length > 0 && !found) {
+        const cur = q.shift();
+        for (const d of dirs) {
+          const nx = cur.x + d.x;
+          const ny = cur.y + d.y;
+          if (nx < 0 || ny < 0 || nx >= WIDTH || ny >= HEIGHT) continue;
+          const key = `${nx},${ny}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const cc = tiles[ny] && tiles[ny][nx];
+          if (cc && (cc === "." || cc === "d" || cc === "c")) {
+            found = { x: nx, y: ny };
+            break;
+          }
+          q.push({ x: nx, y: ny });
+        }
+      }
+      if (found) setPlayer(found);
+    }
+  }, [tiles]);
+
   return (
     <RN.SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -260,6 +368,12 @@ export default function GameScreen({ onExit }) {
           onPress={() => setLegendOpen((s) => !s)}
         >
           <Text style={styles.backText}>Legend</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.backButton, { marginRight: 8 }]}
+          onPress={() => setInvOpen((s) => !s)}
+        >
+          <Text style={styles.backText}>Inventory</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.backButton, { marginRight: 8 }]}
@@ -282,95 +396,31 @@ export default function GameScreen({ onExit }) {
         >
           {player && tiles.length > 0
             ? (() => {
-                // center the viewport on the player
                 let startX = player.x - Math.floor(VIEW_W / 2);
                 let startY = player.y - Math.floor(VIEW_H / 2);
-                // clamp to map bounds
                 startX = Math.max(0, Math.min(startX, WIDTH - VIEW_W));
                 startY = Math.max(0, Math.min(startY, HEIGHT - VIEW_H));
-                const rows = [];
-                for (let vy = 0; vy < VIEW_H; vy++) {
-                  const ry = startY + vy;
-                  const cols = [];
-                  for (let vx = 0; vx < VIEW_W; vx++) {
-                    const rx = startX + vx;
-                    const cell = (tiles[ry] && tiles[ry][rx]) || "#";
-                    const isPlayer = player.x === rx && player.y === ry;
-                    cols.push(
-                      <View
-                        key={`${rx}-${ry}`}
-                        style={{
-                          width: effectiveTileSize,
-                          height: effectiveTileSize,
-                          backgroundColor: isPlayer
-                            ? "#ffd166"
-                            : cell === "."
-                            ? "#2b7a2b"
-                            : cell === "r"
-                            ? "#ff0000"
-                            : cell === "d"
-                            ? "#2b7a2b"
-                            : "#111111",
-                          borderWidth: cell === "d" ? 2 : 0.25,
-                          borderColor:
-                            cell === "d" ? "#3b82f6" : "rgba(0,0,0,0.2)",
-                        }}
-                      />
-                    );
-                  }
-                  rows.push(
-                    <View
-                      key={vy}
-                      style={{
-                        flexDirection: "row",
-                        height: effectiveTileSize,
-                      }}
-                    >
-                      {cols}
-                    </View>
-                  );
-                }
-                return rows;
+                return (
+                  <TileGrid
+                    tiles={tiles}
+                    player={player}
+                    VIEW_W={VIEW_W}
+                    VIEW_H={VIEW_H}
+                    startX={startX}
+                    startY={startY}
+                    size={effectiveTileSize}
+                    pulseAnim={pulseAnim}
+                  />
+                );
               })()
             : null}
         </View>
       </View>
       {/* collapsible legend overlay */}
-      {legendOpen ? (
-        <View style={styles.legendContainer} pointerEvents="box-none">
-          <View style={styles.legendInner}>
-            <View style={styles.legendRow}>
-              <View style={[styles.swatch, { backgroundColor: "#2b7a2b" }]} />
-              <Text style={styles.legendText}>Floor</Text>
-            </View>
-            <View style={styles.legendRow}>
-              <View style={[styles.swatch, { backgroundColor: "#111111" }]} />
-              <Text style={styles.legendText}>Wall</Text>
-            </View>
-            <View style={styles.legendRow}>
-              <View style={[styles.swatch, { backgroundColor: "#ff0000" }]} />
-              <Text style={styles.legendText}>Collidable</Text>
-            </View>
-            <View style={styles.legendRow}>
-              <View
-                style={[
-                  styles.swatch,
-                  {
-                    backgroundColor: "#2b7a2b",
-                    borderWidth: 2,
-                    borderColor: "#3b82f6",
-                  },
-                ]}
-              />
-              <Text style={styles.legendText}>Doorway</Text>
-            </View>
-            <View style={styles.legendRow}>
-              <View style={[styles.swatch, { backgroundColor: "#ffd166" }]} />
-              <Text style={styles.legendText}>Player</Text>
-            </View>
-          </View>
-        </View>
-      ) : null}
+      {legendOpen ? <LegendOverlay /> : null}
+
+      {/* inventory overlay */}
+      {invOpen ? <InventoryOverlay inventory={inventory} /> : null}
 
       {/* minimap: UI overlay component in top-right */}
       {tiles.length > 0 && player ? (
@@ -384,122 +434,9 @@ export default function GameScreen({ onExit }) {
         />
       ) : null}
 
-      {/* simple on-screen D-pad */}
-      <View style={styles.dpadContainer} pointerEvents="box-none">
-        <View style={styles.dpadRow}>
-          <TouchableOpacity
-            style={styles.dpadButton}
-            onPress={() => movePlayer(0, -1)}
-          >
-            <Text style={styles.dpadText}>↑</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.dpadRow}>
-          <TouchableOpacity
-            style={styles.dpadButton}
-            onPress={() => movePlayer(-1, 0)}
-          >
-            <Text style={styles.dpadText}>←</Text>
-          </TouchableOpacity>
-          <View style={{ width: 18 }} />
-          <TouchableOpacity
-            style={styles.dpadButton}
-            onPress={() => movePlayer(1, 0)}
-          >
-            <Text style={styles.dpadText}>→</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.dpadRow}>
-          <TouchableOpacity
-            style={styles.dpadButton}
-            onPress={() => movePlayer(0, 1)}
-          >
-            <Text style={styles.dpadText}>↓</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      <DPad onMove={movePlayer} />
     </RN.SafeAreaView>
   );
 }
 
-const styles = RN.StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#111" },
-  header: {
-    height: 56,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    // backgroundColor: "rgba(255,255,255,0.02)",
-  },
-  headerOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-  },
-  headerText: { color: "#fff", fontSize: 18, fontWeight: "600" },
-  backButton: {
-    backgroundColor: "#333",
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  backText: { color: "#fff" },
-  dpadContainer: {
-    position: "absolute",
-    right: 18,
-    bottom: 18,
-    alignItems: "center",
-  },
-  dpadRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dpadButton: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    padding: 10,
-    borderRadius: 8,
-    margin: 6,
-  },
-  dpadText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  minimapContainer: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    padding: 4,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    borderRadius: 6,
-    overflow: "hidden",
-  },
-  minimapInner: {
-    backgroundColor: "#000",
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-  minimapAbsolute: {
-    position: "absolute",
-    top: 120,
-    right: 8,
-    padding: 4,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    borderRadius: 6,
-    zIndex: 50,
-  },
-  legendContainer: {
-    position: "absolute",
-    top: 120,
-    right: 150,
-    zIndex: 60,
-  },
-  legendInner: {
-    backgroundColor: "rgba(0,0,0,0.8)",
-    padding: 8,
-    borderRadius: 8,
-  },
-  legendRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
-  swatch: { width: 16, height: 16, marginRight: 8, borderRadius: 2 },
-  legendText: { color: "#fff", fontSize: 12 },
-});
+const styles = CommonStyles;

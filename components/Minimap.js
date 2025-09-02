@@ -1,5 +1,6 @@
 import React from "react";
-import { View, StyleSheet } from "react-native";
+import { View } from "react-native";
+import CommonStyles, { colors } from "../styles/common";
 
 export default function Minimap({
   tiles = [],
@@ -14,7 +15,10 @@ export default function Minimap({
   return (
     <View style={style} pointerEvents="none">
       <View
-        style={[styles.minimapInner, { width: miniWidth, height: miniHeight }]}
+        style={[
+          CommonStyles.minimapInner,
+          { width: miniWidth, height: miniHeight },
+        ]}
       >
         {tiles.map((row, y) => (
           <View
@@ -54,6 +58,8 @@ export default function Minimap({
                 ? "#2b7a2b"
                 : cell === "r"
                 ? "#ff0000"
+                : cell === "c"
+                ? "#ffd700"
                 : "#111111";
               return (
                 <View
@@ -72,11 +78,3 @@ export default function Minimap({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  minimapInner: {
-    backgroundColor: "#000",
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-});
