@@ -44,10 +44,10 @@ export default function GameScreen({ onExit }) {
       for (let y = 0; y < HEIGHT; y++) {
         _tiles[y][bx] = "#";
       }
-      // opening centered vertically per section
+      // opening centered vertically per section (use 'd' for doorway)
       for (let sy = 0; sy < SECTIONS_Y; sy++) {
         const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
-        if (oy >= 0 && oy < HEIGHT) _tiles[oy][bx] = ".";
+        if (oy >= 0 && oy < HEIGHT) _tiles[oy][bx] = "d";
       }
     });
 
@@ -56,14 +56,79 @@ export default function GameScreen({ onExit }) {
       for (let x = 0; x < WIDTH; x++) {
         _tiles[by][x] = "#";
       }
-      // opening centered horizontally per section
+      // opening centered horizontally per section (use 'd' for doorway)
       for (let sx = 0; sx < SECTIONS_X; sx++) {
         const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
-        if (ox >= 0 && ox < WIDTH) _tiles[by][ox] = ".";
+        if (ox >= 0 && ox < WIDTH) _tiles[by][ox] = "d";
       }
     });
 
     // commit tiles to state
+    // place 4 red obstacles per section (symbol 'r') avoiding walls and openings
+    function placeRedObstacles() {
+      // build set of forbidden positions: any tile adjacent (4-dir) to any section opening
+      const forbidden = new Set();
+      // vertical boundaries openings
+      const vBoundaries = [SECTION_W, SECTION_W * 2];
+      vBoundaries.forEach((bx) => {
+        for (let sy = 0; sy < SECTIONS_Y; sy++) {
+          const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
+          const opens = [
+            [bx, oy],
+            [bx - 1, oy],
+            [bx + 1, oy],
+            [bx, oy - 1],
+            [bx, oy + 1],
+          ];
+          opens.forEach(([x, y]) => {
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+              forbidden.add(`${x},${y}`);
+          });
+        }
+      });
+      // horizontal boundaries openings
+      const hBoundaries = [SECTION_H, SECTION_H * 2];
+      hBoundaries.forEach((by) => {
+        for (let sx = 0; sx < SECTIONS_X; sx++) {
+          const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
+          const opens = [
+            [ox, by],
+            [ox - 1, by],
+            [ox + 1, by],
+            [ox, by - 1],
+            [ox, by + 1],
+          ];
+          opens.forEach(([x, y]) => {
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+              forbidden.add(`${x},${y}`);
+          });
+        }
+      });
+
+      for (let sx = 0; sx < SECTIONS_X; sx++) {
+        for (let sy = 0; sy < SECTIONS_Y; sy++) {
+          let placed = 0;
+          const startX = sx * SECTION_W;
+          const startY = sy * SECTION_H;
+          let tries = 0;
+          while (placed < 4 && tries < 500) {
+            const rx = startX + Math.floor(Math.random() * SECTION_W);
+            const ry = startY + Math.floor(Math.random() * SECTION_H);
+            if (
+              _tiles[ry] &&
+              _tiles[ry][rx] === "." &&
+              !forbidden.has(`${rx},${ry}`)
+            ) {
+              _tiles[ry][rx] = "r"; // red obstacle
+              placed++;
+            }
+            tries++;
+          }
+        }
+      }
+    }
+
+    placeRedObstacles();
     setTiles(_tiles);
 
     // spawn player near the center: search outward from center
@@ -76,7 +141,7 @@ export default function GameScreen({ onExit }) {
           const x = cx + dx;
           const y = cy + dy;
           if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
-            if (_tiles[y][x] === ".") {
+            if (_tiles[y][x] === "." || _tiles[y][x] === "d") {
               setPlayer({ x, y });
               spawned = true;
             }
@@ -109,15 +174,93 @@ export default function GameScreen({ onExit }) {
     const ny = player.y + dy;
     if (nx < 0 || nx >= WIDTH || ny < 0 || ny >= HEIGHT) return;
     // respect walls: only move onto '.' floor tiles
-    if (tiles[ny] && tiles[ny][nx] === ".") {
+    if (tiles[ny] && (tiles[ny][nx] === "." || tiles[ny][nx] === "d")) {
       setPlayer({ x: nx, y: ny });
     }
+  }
+
+  // randomize the 4 red collidable tiles per section
+  function randomizeRedObstacles() {
+    setTiles((prev) => {
+      if (!prev || prev.length === 0) return prev;
+      // deep copy
+      const newTiles = prev.map((row) =>
+        row.map((cell) => (cell === "r" ? "." : cell))
+      );
+
+      // build forbidden set (same logic used during initial placement)
+      const forbidden = new Set();
+      const vBoundaries = [SECTION_W, SECTION_W * 2];
+      vBoundaries.forEach((bx) => {
+        for (let sy = 0; sy < SECTIONS_Y; sy++) {
+          const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
+          const opens = [
+            [bx, oy],
+            [bx - 1, oy],
+            [bx + 1, oy],
+            [bx, oy - 1],
+            [bx, oy + 1],
+          ];
+          opens.forEach(([x, y]) => {
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+              forbidden.add(`${x},${y}`);
+          });
+        }
+      });
+      const hBoundaries = [SECTION_H, SECTION_H * 2];
+      hBoundaries.forEach((by) => {
+        for (let sx = 0; sx < SECTIONS_X; sx++) {
+          const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
+          const opens = [
+            [ox, by],
+            [ox - 1, by],
+            [ox + 1, by],
+            [ox, by - 1],
+            [ox, by + 1],
+          ];
+          opens.forEach(([x, y]) => {
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+              forbidden.add(`${x},${y}`);
+          });
+        }
+      });
+
+      for (let sx = 0; sx < SECTIONS_X; sx++) {
+        for (let sy = 0; sy < SECTIONS_Y; sy++) {
+          let placed = 0;
+          const startX = sx * SECTION_W;
+          const startY = sy * SECTION_H;
+          let tries = 0;
+          while (placed < 4 && tries < 500) {
+            const rx = startX + Math.floor(Math.random() * SECTION_W);
+            const ry = startY + Math.floor(Math.random() * SECTION_H);
+            if (
+              newTiles[ry] &&
+              newTiles[ry][rx] === "." &&
+              !forbidden.has(`${rx},${ry}`)
+            ) {
+              newTiles[ry][rx] = "r";
+              placed++;
+            }
+            tries++;
+          }
+        }
+      }
+
+      return newTiles;
+    });
   }
 
   return (
     <RN.SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={[styles.backButton, { marginRight: 8 }]}
+          onPress={randomizeRedObstacles}
+        >
+          <Text style={styles.backText}>Randomize</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.backButton} onPress={onExit}>
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
@@ -156,9 +299,14 @@ export default function GameScreen({ onExit }) {
                             ? "#ffd166"
                             : cell === "."
                             ? "#2b7a2b"
+                            : cell === "r"
+                            ? "#ff0000"
+                            : cell === "d"
+                            ? "#2b7a2b"
                             : "#111111",
-                          borderWidth: 0.25,
-                          borderColor: "rgba(0,0,0,0.2)",
+                          borderWidth: cell === "d" ? 2 : 0.25,
+                          borderColor:
+                            cell === "d" ? "#3b82f6" : "rgba(0,0,0,0.2)",
                         }}
                       />
                     );

@@ -23,10 +23,37 @@ export default function Minimap({
           >
             {row.map((cell, x) => {
               const isPlayer = player && player.x === x && player.y === y;
+              if (cell === "d") {
+                // doorway: outer blue border, inner green fill (smaller)
+                const borderSize = 1; // 1px border in minimap scale
+                const inner = Math.max(1, miniTile - borderSize * 2);
+                return (
+                  <View
+                    key={`c-${x}-${y}`}
+                    style={{
+                      width: miniTile,
+                      height: miniTile,
+                      backgroundColor: "#3b82f6",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: inner,
+                        height: inner,
+                        backgroundColor: "#2b7a2b",
+                      }}
+                    />
+                  </View>
+                );
+              }
               const bg = isPlayer
                 ? "#ff5c5c"
                 : cell === "."
                 ? "#2b7a2b"
+                : cell === "r"
+                ? "#ff0000"
                 : "#111111";
               return (
                 <View
