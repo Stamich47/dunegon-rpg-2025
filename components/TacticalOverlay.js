@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, TouchableOpacity } from "react-native";
+import React, { useRef, useEffect } from "react";
+import { View, Text, TouchableOpacity, Animated } from "react-native";
 
 export default function TacticalOverlay({
   playerHp,
@@ -7,7 +7,47 @@ export default function TacticalOverlay({
   onAttack,
   onDodge,
   onClose,
+  message,
+  playerHitSignal = 0,
+  enemyHitSignal = 0,
 }) {
+  const playerGlow = useRef(new Animated.Value(0)).current;
+  const enemyGlow = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // run quick red glow when player is hit
+    if (playerHitSignal > 0) {
+      Animated.sequence([
+        Animated.timing(playerGlow, {
+          toValue: 1,
+          duration: 120,
+          useNativeDriver: false,
+        }),
+        Animated.timing(playerGlow, {
+          toValue: 0,
+          duration: 180,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    }
+  }, [playerHitSignal]);
+
+  useEffect(() => {
+    if (enemyHitSignal > 0) {
+      Animated.sequence([
+        Animated.timing(enemyGlow, {
+          toValue: 1,
+          duration: 120,
+          useNativeDriver: false,
+        }),
+        Animated.timing(enemyGlow, {
+          toValue: 0,
+          duration: 180,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    }
+  }, [enemyHitSignal]);
   return (
     <View
       style={{
@@ -34,13 +74,21 @@ export default function TacticalOverlay({
         <View
           style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
         >
-          <View
+          <Animated.View
             style={{
               width: 96,
               height: 96,
               borderRadius: 12,
               backgroundColor: "#fbbf24",
               marginBottom: 8,
+              borderWidth: playerGlow.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 6],
+              }),
+              borderColor: playerGlow.interpolate({
+                inputRange: [0, 1],
+                outputRange: ["transparent", "#ef4444"],
+              }),
             }}
           />
           <Text style={{ color: "#fff", marginBottom: 6 }}>You</Text>
@@ -73,13 +121,21 @@ export default function TacticalOverlay({
         <View
           style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
         >
-          <View
+          <Animated.View
             style={{
               width: 96,
               height: 96,
               borderRadius: 12,
               backgroundColor: "#ef4444",
               marginBottom: 8,
+              borderWidth: enemyGlow.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 6],
+              }),
+              borderColor: enemyGlow.interpolate({
+                inputRange: [0, 1],
+                outputRange: ["transparent", "#f87171"],
+              }),
             }}
           />
           <Text style={{ color: "#fff", marginBottom: 6 }}>Enemy</Text>
@@ -103,6 +159,13 @@ export default function TacticalOverlay({
           <Text style={{ color: "#fff", marginTop: 6 }}>{enemyHp} / 10 HP</Text>
         </View>
       </View>
+
+      {/* message area (render under the modal box, above action buttons) */}
+      {message ? (
+        <View style={{ width: "90%", marginTop: 12, alignItems: "center" }}>
+          <Text style={{ color: "#fff" }}>{message}</Text>
+        </View>
+      ) : null}
 
       <View style={{ marginTop: 12, flexDirection: "row", gap: 12 }}>
         <TouchableOpacity

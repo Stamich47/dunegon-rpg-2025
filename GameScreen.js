@@ -26,7 +26,18 @@ export default function GameScreen({ onExit }) {
   const [legendOpen, setLegendOpen] = useState(false);
   const [invOpen, setInvOpen] = useState(false);
   const [inventory, setInventory] = useState({ gold: 0, items: [] });
+  const [playerStats, setPlayerStats] = useState({
+    hp: 20,
+    maxHp: 20,
+    baseAttack: 1,
+    baseDefense: 0,
+    weapon: null, // { instanceId, templateId }
+    armor: null,
+  });
   const [combat, setCombat] = useState(null); // { enemyId, enemyHp, playerHp, turn: 'player'|'enemy' }
+  const [combatMessage, setCombatMessage] = useState(null);
+  const [playerHitSignal, setPlayerHitSignal] = useState(0);
+  const [enemyHitSignal, setEnemyHitSignal] = useState(0);
   const pulseAnim = useRef(new RN.Animated.Value(0)).current;
   const engineRef = useRef(null);
   const unwatchRef = useRef(null);
@@ -149,6 +160,8 @@ export default function GameScreen({ onExit }) {
     if (player) {
       pid = engine.addEntity({ type: "player", x: player.x, y: player.y });
     }
+
+    // ensure playerStats hp carried into player position (no-op here)
 
     // expose engine to handlers
     engineRef.current = engine;
@@ -433,6 +446,53 @@ export default function GameScreen({ onExit }) {
       engineRef.current.emitIntent({ type: "move", dx, dy });
   }
 
+  function handleEquip(itemInstance) {
+    if (!itemInstance) return;
+    const tpl =
+      itemTemplates.find((t) => t.id === itemInstance.templateId) || {};
+    if (!tpl || !tpl.equipSlot) return;
+    setInventory((inv) => {
+      // remove one qty from inventory list
+      const items = (inv.items || []).map((it) => ({ ...it }));
+      const idx = items.findIndex(
+        (i) => i.instanceId === itemInstance.instanceId
+      );
+      if (idx >= 0) {
+        if ((items[idx].qty || 1) > 1) items[idx].qty -= 1;
+        else items.splice(idx, 1);
+      }
+      const slots = { ...(inv._slots || {}) };
+      const slotKey =
+        tpl.equipSlot === "hand"
+          ? "weapon"
+          : tpl.equipSlot === "body"
+          ? "armor"
+          : null;
+      if (!slotKey) return { ...inv, items, _slots: slots };
+      // if something is already equipped, put it back to inventory
+      if (slots[slotKey]) {
+        const old = slots[slotKey];
+        items.push({
+          instanceId: old.instanceId,
+          templateId: old.templateId,
+          qty: 1,
+        });
+      }
+      slots[slotKey] = {
+        instanceId: itemInstance.instanceId,
+        templateId: itemInstance.templateId,
+      };
+      // update playerStats
+      setPlayerStats((ps) => {
+        const newPs = { ...ps };
+        if (slotKey === "weapon") newPs.weapon = slots[slotKey];
+        if (slotKey === "armor") newPs.armor = slots[slotKey];
+        return newPs;
+      });
+      return { ...inv, items, _slots: slots };
+    });
+  }
+
   // tactical combat handlers
   function endCombat(removeEnemy, enemyPosParam) {
     const pos = enemyPosParam || (combat && combat.enemyPos);
@@ -487,8 +547,17 @@ export default function GameScreen({ onExit }) {
   function handleAttack() {
     if (!combat) return;
     const pos = combat && combat.enemyPos;
-    // player attacks: 0-4 damage random
-    const dmg = Math.floor(Math.random() * 5);
+    // player attacks: base random plus weapon bonus
+    const weaponTpl = playerStats.weapon
+      ? itemTemplates.find((t) => t.id === playerStats.weapon.templateId)
+      : null;
+    const weaponBonus = weaponTpl && weaponTpl.attack ? weaponTpl.attack : 0;
+    const baseDmg = Math.floor(Math.random() * 5);
+    const dmg = baseDmg + (playerStats.baseAttack || 0) + weaponBonus;
+    // set combat message
+    const weaponName = weaponTpl ? weaponTpl.name : "fists";
+    setCombatMessage(`Player attacks with ${weaponName} for ${dmg} damage!`);
+    setTimeout(() => setCombatMessage(null), 1200);
     // apply enemy damage using functional update to avoid stale reads
     setCombat((prev) => {
       if (!prev) return prev;
@@ -498,25 +567,40 @@ export default function GameScreen({ onExit }) {
         // schedule cleanup with captured pos
         setTimeout(() => endCombat(true, pos), 300);
       } else {
-        // schedule enemy attack after brief delay
+        // schedule enemy attack after 2s delay so player can act again immediately
         setTimeout(() => {
+          const enemyAtk = 1;
+          const armorTpl = playerStats.armor
+            ? itemTemplates.find((t) => t.id === playerStats.armor.templateId)
+            : null;
+          const armorBonus =
+            armorTpl && armorTpl.defense ? armorTpl.defense : 0;
+          const raw = Math.max(0, enemyAtk - armorBonus);
           setCombat((prev2) => {
             if (!prev2) return prev2;
+            // if enemy already dead, skip
+            if ((prev2.enemyHp || 0) <= 0) return prev2;
             const curPlayerHp =
               typeof prev2.playerHp === "number" ? prev2.playerHp : 10;
-            const newPlayerHp = Math.max(0, curPlayerHp - 1);
+            const newPlayerHp = Math.max(0, curPlayerHp - raw);
             const updated2 = {
               ...prev2,
               playerHp: newPlayerHp,
               turn: "player",
             };
+            // signal player hit for UI flicker
+            if (raw > 0) setPlayerHitSignal((s) => s + 1);
+            setCombatMessage(`Enemy hits for ${raw} damage!`);
+            setTimeout(() => setCombatMessage(null), 1000);
             if (newPlayerHp <= 0) {
               setTimeout(() => endCombat(false, pos), 300);
             }
             return updated2;
           });
-        }, 450);
+        }, 2000);
       }
+      // signal enemy hit for UI flicker if damage > 0
+      if (dmg > 0) setEnemyHitSignal((s) => s + 1);
       return updated;
     });
   }
@@ -524,22 +608,34 @@ export default function GameScreen({ onExit }) {
   function handleDodge() {
     if (!combat) return;
     const pos = combat && combat.enemyPos;
-    // enemy attacks next: 50% chance to avoid damage
-    const avoided = Math.random() < 0.5;
-    if (avoided) {
-      // no damage
-      setCombat((c) => (c ? { ...c, turn: "player" } : c));
-    } else {
+    // schedule enemy attack after 2s so player can act immediately
+    setTimeout(() => {
+      if (!combat) return;
+      const avoided = Math.random() < 0.5;
+      if (avoided) {
+        setCombat((c) => (c ? { ...c, turn: "player" } : c));
+        setCombatMessage(`Enemy attacks but misses!`);
+        setTimeout(() => setCombatMessage(null), 1000);
+        return;
+      }
+      const enemyAtk = 1;
+      const armorTpl = playerStats.armor
+        ? itemTemplates.find((t) => t.id === playerStats.armor.templateId)
+        : null;
+      const armorBonus = armorTpl && armorTpl.defense ? armorTpl.defense : 0;
+      const raw = Math.max(0, enemyAtk - armorBonus);
       setCombat((prev) => {
         if (!prev) return prev;
         const curPlayerHp =
           typeof prev.playerHp === "number" ? prev.playerHp : 10;
-        const newPlayerHp = Math.max(0, curPlayerHp - 1);
+        const newPlayerHp = Math.max(0, curPlayerHp - raw);
         const updated = { ...prev, playerHp: newPlayerHp, turn: "player" };
+        setCombatMessage(`Enemy hits for ${raw} damage!`);
+        setTimeout(() => setCombatMessage(null), 1000);
         if (newPlayerHp <= 0) setTimeout(() => endCombat(false, pos), 300);
         return updated;
       });
-    }
+    }, 2000);
   }
 
   function handleFlee() {
@@ -867,7 +963,9 @@ export default function GameScreen({ onExit }) {
       {legendOpen ? <LegendOverlay /> : null}
 
       {/* inventory overlay */}
-      {invOpen ? <InventoryOverlay inventory={inventory} /> : null}
+      {invOpen ? (
+        <InventoryOverlay inventory={inventory} onEquip={handleEquip} />
+      ) : null}
 
       {/* minimap: UI overlay component in top-right */}
       {tiles.length > 0 && player ? (
@@ -889,6 +987,9 @@ export default function GameScreen({ onExit }) {
           onAttack={handleAttack}
           onDodge={handleDodge}
           onClose={handleFlee}
+          message={combatMessage}
+          playerHitSignal={playerHitSignal}
+          enemyHitSignal={enemyHitSignal}
         />
       ) : null}
     </RN.SafeAreaView>
