@@ -13,6 +13,7 @@ import Minimap from "./components/Minimap";
 export default function GameScreen({ onExit }) {
   const [tiles, setTiles] = useState([]);
   const [player, setPlayer] = useState(null);
+  const [legendOpen, setLegendOpen] = useState(false);
   // sections: screen is one section; there are 3x3 sections
   const VIEW_W = 10; // tiles per screen horizontally
   const VIEW_H = 10; // tiles per screen vertically
@@ -38,15 +39,21 @@ export default function GameScreen({ onExit }) {
     });
 
     // carve section-separating walls (thicker) with one opening per section edge
-    // 1-tile thick section walls with single central opening
+    // 1-tile thick section walls with single doorway per edge; doorway position is randomized along the wall
     const vBoundaries = [SECTION_W, SECTION_W * 2];
     vBoundaries.forEach((bx) => {
       for (let y = 0; y < HEIGHT; y++) {
         _tiles[y][bx] = "#";
       }
-      // opening centered vertically per section (use 'd' for doorway)
+      // one opening per section edge, randomized vertically within the section
       for (let sy = 0; sy < SECTIONS_Y; sy++) {
-        const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
+        // pick a random y inside the section but avoid horizontal boundary intersections
+        let oy;
+        let tries = 0;
+        do {
+          oy = sy * SECTION_H + Math.floor(Math.random() * SECTION_H);
+          tries++;
+        } while ((oy === SECTION_H || oy === SECTION_H * 2) && tries < 20);
         if (oy >= 0 && oy < HEIGHT) _tiles[oy][bx] = "d";
       }
     });
@@ -56,9 +63,15 @@ export default function GameScreen({ onExit }) {
       for (let x = 0; x < WIDTH; x++) {
         _tiles[by][x] = "#";
       }
-      // opening centered horizontally per section (use 'd' for doorway)
+      // one opening per section edge, randomized horizontally within the section
       for (let sx = 0; sx < SECTIONS_X; sx++) {
-        const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
+        // pick a random x inside the section but avoid vertical boundary intersections
+        let ox;
+        let tries = 0;
+        do {
+          ox = sx * SECTION_W + Math.floor(Math.random() * SECTION_W);
+          tries++;
+        } while ((ox === SECTION_W || ox === SECTION_W * 2) && tries < 20);
         if (ox >= 0 && ox < WIDTH) _tiles[by][ox] = "d";
       }
     });
@@ -66,40 +79,22 @@ export default function GameScreen({ onExit }) {
     // commit tiles to state
     // place 4 red obstacles per section (symbol 'r') avoiding walls and openings
     function placeRedObstacles() {
-      // build set of forbidden positions: any tile adjacent (4-dir) to any section opening
+      // build set of forbidden positions by scanning actual doorway tiles ('d') and adding their 3x3 areas
       const forbidden = new Set();
-      // vertical boundaries openings
-      const vBoundaries = [SECTION_W, SECTION_W * 2];
-      vBoundaries.forEach((bx) => {
-        for (let sy = 0; sy < SECTIONS_Y; sy++) {
-          const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
-          // add full 3x3 area around the doorway
-          for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-              const x = bx + dx;
-              const y = oy + dy;
-              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-                forbidden.add(`${x},${y}`);
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          if (_tiles[y][x] === "d") {
+            for (let dx = -1; dx <= 1; dx++) {
+              for (let dy = -1; dy <= 1; dy++) {
+                const fx = x + dx;
+                const fy = y + dy;
+                if (fx >= 0 && fx < WIDTH && fy >= 0 && fy < HEIGHT)
+                  forbidden.add(`${fx},${fy}`);
+              }
             }
           }
         }
-      });
-      // horizontal boundaries openings
-      const hBoundaries = [SECTION_H, SECTION_H * 2];
-      hBoundaries.forEach((by) => {
-        for (let sx = 0; sx < SECTIONS_X; sx++) {
-          const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
-          // add full 3x3 area around the doorway
-          for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-              const x = ox + dx;
-              const y = by + dy;
-              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-                forbidden.add(`${x},${y}`);
-            }
-          }
-        }
-      });
+      }
 
       for (let sx = 0; sx < SECTIONS_X; sx++) {
         for (let sy = 0; sy < SECTIONS_Y; sy++) {
@@ -179,44 +174,57 @@ export default function GameScreen({ onExit }) {
   function randomizeRedObstacles() {
     setTiles((prev) => {
       if (!prev || prev.length === 0) return prev;
-      // deep copy
+      // deep copy and clear previous red obstacles
       const newTiles = prev.map((row) =>
         row.map((cell) => (cell === "r" ? "." : cell))
       );
 
-      // build forbidden set (same logic used during initial placement)
-      const forbidden = new Set();
+      // Rebuild section boundary walls and randomize doorways along each wall
       const vBoundaries = [SECTION_W, SECTION_W * 2];
       vBoundaries.forEach((bx) => {
+        for (let y = 0; y < HEIGHT; y++) newTiles[y][bx] = "#";
         for (let sy = 0; sy < SECTIONS_Y; sy++) {
-          const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
-          // add full 3x3 area around the doorway
-          for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-              const x = bx + dx;
-              const y = oy + dy;
-              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-                forbidden.add(`${x},${y}`);
-            }
-          }
+          let oy;
+          let tries = 0;
+          do {
+            oy = sy * SECTION_H + Math.floor(Math.random() * SECTION_H);
+            tries++;
+          } while ((oy === SECTION_H || oy === SECTION_H * 2) && tries < 20);
+          if (oy >= 0 && oy < HEIGHT) newTiles[oy][bx] = "d";
         }
       });
       const hBoundaries = [SECTION_H, SECTION_H * 2];
       hBoundaries.forEach((by) => {
+        for (let x = 0; x < WIDTH; x++) newTiles[by][x] = "#";
         for (let sx = 0; sx < SECTIONS_X; sx++) {
-          const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
-          // add full 3x3 area around the doorway
-          for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-              const x = ox + dx;
-              const y = by + dy;
-              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-                forbidden.add(`${x},${y}`);
-            }
-          }
+          let ox;
+          let tries = 0;
+          do {
+            ox = sx * SECTION_W + Math.floor(Math.random() * SECTION_W);
+            tries++;
+          } while ((ox === SECTION_W || ox === SECTION_W * 2) && tries < 20);
+          if (ox >= 0 && ox < WIDTH) newTiles[by][ox] = "d";
         }
       });
 
+      // build forbidden set by scanning newTiles for actual doorway 'd' tiles
+      const forbidden = new Set();
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          if (newTiles[y][x] === "d") {
+            for (let dx = -1; dx <= 1; dx++) {
+              for (let dy = -1; dy <= 1; dy++) {
+                const fx = x + dx;
+                const fy = y + dy;
+                if (fx >= 0 && fx < WIDTH && fy >= 0 && fy < HEIGHT)
+                  forbidden.add(`${fx},${fy}`);
+              }
+            }
+          }
+        }
+      }
+
+      // place red obstacles per section respecting forbidden set
       for (let sx = 0; sx < SECTIONS_X; sx++) {
         for (let sy = 0; sy < SECTIONS_Y; sy++) {
           let placed = 0;
@@ -249,10 +257,17 @@ export default function GameScreen({ onExit }) {
         <View style={{ flex: 1 }} />
         <TouchableOpacity
           style={[styles.backButton, { marginRight: 8 }]}
+          onPress={() => setLegendOpen((s) => !s)}
+        >
+          <Text style={styles.backText}>Legend</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.backButton, { marginRight: 8 }]}
           onPress={randomizeRedObstacles}
         >
           <Text style={styles.backText}>Randomize</Text>
         </TouchableOpacity>
+
         <TouchableOpacity style={styles.backButton} onPress={onExit}>
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
@@ -320,6 +335,42 @@ export default function GameScreen({ onExit }) {
             : null}
         </View>
       </View>
+      {/* collapsible legend overlay */}
+      {legendOpen ? (
+        <View style={styles.legendContainer} pointerEvents="box-none">
+          <View style={styles.legendInner}>
+            <View style={styles.legendRow}>
+              <View style={[styles.swatch, { backgroundColor: "#2b7a2b" }]} />
+              <Text style={styles.legendText}>Floor</Text>
+            </View>
+            <View style={styles.legendRow}>
+              <View style={[styles.swatch, { backgroundColor: "#111111" }]} />
+              <Text style={styles.legendText}>Wall</Text>
+            </View>
+            <View style={styles.legendRow}>
+              <View style={[styles.swatch, { backgroundColor: "#ff0000" }]} />
+              <Text style={styles.legendText}>Collidable</Text>
+            </View>
+            <View style={styles.legendRow}>
+              <View
+                style={[
+                  styles.swatch,
+                  {
+                    backgroundColor: "#2b7a2b",
+                    borderWidth: 2,
+                    borderColor: "#3b82f6",
+                  },
+                ]}
+              />
+              <Text style={styles.legendText}>Doorway</Text>
+            </View>
+            <View style={styles.legendRow}>
+              <View style={[styles.swatch, { backgroundColor: "#ffd166" }]} />
+              <Text style={styles.legendText}>Player</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
 
       {/* minimap: UI overlay component in top-right */}
       {tiles.length > 0 && player ? (
@@ -437,4 +488,18 @@ const styles = RN.StyleSheet.create({
     borderRadius: 6,
     zIndex: 50,
   },
+  legendContainer: {
+    position: "absolute",
+    top: 120,
+    right: 150,
+    zIndex: 60,
+  },
+  legendInner: {
+    backgroundColor: "rgba(0,0,0,0.8)",
+    padding: 8,
+    borderRadius: 8,
+  },
+  legendRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+  swatch: { width: 16, height: 16, marginRight: 8, borderRadius: 2 },
+  legendText: { color: "#fff", fontSize: 12 },
 });
