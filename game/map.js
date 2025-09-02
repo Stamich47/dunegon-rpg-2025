@@ -66,8 +66,8 @@ export function generateMap({
     return forbidden;
   }
 
-  // place red obstacles
-  function placeRedObstacles(tiles) {
+  // place gray collidable obstacles (symbol 'x') and one enemy per section ('e')
+  function placeObstaclesAndEnemies(tiles) {
     const forbidden = buildForbidden(tiles);
     for (let sx = 0; sx < SECTIONS_X; sx++) {
       for (let sy = 0; sy < SECTIONS_Y; sy++) {
@@ -83,8 +83,30 @@ export function generateMap({
             tiles[ry][rx] === "." &&
             !forbidden.has(`${rx},${ry}`)
           ) {
-            tiles[ry][rx] = "r";
+            tiles[ry][rx] = "x";
             placed++;
+          }
+          tries++;
+        }
+      }
+    }
+    // now place one stationary enemy 'e' per section
+    for (let sx = 0; sx < SECTIONS_X; sx++) {
+      for (let sy = 0; sy < SECTIONS_Y; sy++) {
+        const startX = sx * SECTION_W;
+        const startY = sy * SECTION_H;
+        let tries = 0;
+        let placed = false;
+        while (!placed && tries < 500) {
+          const ex = startX + Math.floor(Math.random() * SECTION_W);
+          const ey = startY + Math.floor(Math.random() * SECTION_H);
+          if (
+            tiles[ey] &&
+            tiles[ey][ex] === "." &&
+            !forbidden.has(`${ex},${ey}`)
+          ) {
+            tiles[ey][ex] = "e";
+            placed = true;
           }
           tries++;
         }
@@ -118,7 +140,7 @@ export function generateMap({
     }
   }
 
-  placeRedObstacles(_tiles);
+  placeObstaclesAndEnemies(_tiles);
   placeChests(_tiles);
 
   // spawn player near center

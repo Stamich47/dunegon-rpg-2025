@@ -56,8 +56,10 @@ export default function Minimap({
                 ? "#ff5c5c"
                 : cell === "."
                 ? "#2b7a2b"
-                : cell === "r"
-                ? "#ff0000"
+                : cell === "x"
+                ? "#9ca3af" // gray collidable
+                : cell === "e"
+                ? "#ff0000" // enemy red
                 : cell === "c"
                 ? "#ffd700"
                 : "#111111";

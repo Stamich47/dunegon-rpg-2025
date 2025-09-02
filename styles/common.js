@@ -8,7 +8,8 @@ export const colors = {
   chestBorder: "#b86b00",
   floor: "#2b7a2b",
   wall: "#111111",
-  collidable: "#ff0000",
+  collidable: "#9ca3af",
+  enemy: "#ff0000",
   doorwayBorder: "#3b82f6",
 };
 

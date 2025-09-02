@@ -18,6 +18,7 @@ import TileGrid from "./components/TileGrid";
 import DPad from "./components/DPad";
 import LegendOverlay from "./components/LegendOverlay";
 import InventoryOverlay from "./components/InventoryOverlay";
+import TacticalOverlay from "./components/TacticalOverlay";
 
 export default function GameScreen({ onExit }) {
   const [tiles, setTiles] = useState([]);
@@ -25,8 +26,11 @@ export default function GameScreen({ onExit }) {
   const [legendOpen, setLegendOpen] = useState(false);
   const [invOpen, setInvOpen] = useState(false);
   const [inventory, setInventory] = useState({ gold: 0, items: [] });
+  const [combat, setCombat] = useState(null); // { enemyId, enemyHp, playerHp, turn: 'player'|'enemy' }
   const pulseAnim = useRef(new RN.Animated.Value(0)).current;
   const engineRef = useRef(null);
+  const unwatchRef = useRef(null);
+  const tilesRef = useRef(tiles);
   // sections: screen is one section; there are 3x3 sections
   const VIEW_W = 10; // tiles per screen horizontally
   const VIEW_H = 10; // tiles per screen vertically
@@ -49,9 +53,19 @@ export default function GameScreen({ onExit }) {
     if (result.spawn) setPlayer(result.spawn);
   }, []);
 
+  // keep tilesRef in sync so engine systems read the latest tiles state
+  useEffect(() => {
+    tilesRef.current = tiles;
+  }, [tiles]);
+
   // --- mini engine wiring (non-destructive): create engine and mirror entities
   useEffect(() => {
-    const engine = createEngine(120);
+    // only create engine once when tiles are ready
+    if (engineRef.current) return;
+    if (!tiles || tiles.length === 0) return; // wait for map to load
+    const ENGINE_TICK_MS = 120;
+    const ticksPerSecond = Math.max(1, Math.round(1000 / ENGINE_TICK_MS));
+    const engine = createEngine(ENGINE_TICK_MS);
 
     // register a system to detect player/chest overlap and perform pickup
     engine.registerSystem((entitiesSnapshot) => {
@@ -110,6 +124,26 @@ export default function GameScreen({ onExit }) {
       });
     });
 
+    // create enemy entities from tiles ('e')
+    const enemyIds = [];
+    tiles.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        if (cell === "e") {
+          const eid = engine.addEntity({
+            type: "enemy",
+            x,
+            y,
+            state: "wander",
+            speed: ticksPerSecond, // move ~once per second
+            nextMoveAt: ticksPerSecond, // schedule first move after initial delay
+            detectRange: 6, // retained but unused while chase disabled
+          });
+          enemyIds.push(eid);
+          console.log(`[Engine] spawned enemy ${eid} at ${x},${y}`);
+        }
+      });
+    });
+
     // player entity
     let pid = null;
     if (player) {
@@ -130,8 +164,23 @@ export default function GameScreen({ onExit }) {
           const nx = playerEnt.x + it.dx;
           const ny = playerEnt.y + it.dy;
           if (nx < 0 || ny < 0 || nx >= WIDTH || ny >= HEIGHT) return;
-          const cell = tiles[ny] && tiles[ny][nx];
+          const currentTiles = tilesRef.current || tiles;
+          const cell = currentTiles[ny] && currentTiles[ny][nx];
           if (!cell) return;
+          // if an enemy entity occupies the target, start combat (covers tiles/entities desync)
+          const enemyHere = entitiesSnapshot.find(
+            (e) => e.type === "enemy" && e.x === nx && e.y === ny
+          );
+          if (enemyHere) {
+            setCombat({
+              enemyId: enemyHere.id,
+              enemyHp: 10,
+              playerHp: 10,
+              turn: "player",
+              enemyPos: { x: nx, y: ny },
+            });
+            return;
+          }
           if (cell === "." || cell === "d" || cell === "c") {
             // move player entity
             engine.updateEntity(playerEnt.id, { x: nx, y: ny });
@@ -142,10 +191,8 @@ export default function GameScreen({ onExit }) {
                 (e) => e.type === "chest" && e.x === nx && e.y === ny
               );
               if (chestEnt) {
-                // chest content may be gold or item instance
                 const content = chestEnt.content;
                 if (!content) {
-                  // fallback: award 1
                   setInventory((inv) => ({
                     ...inv,
                     gold: (inv.gold || 0) + 1,
@@ -180,7 +227,6 @@ export default function GameScreen({ onExit }) {
                     return { ...inv, items };
                   });
                 } else if (content.kind === "bundle") {
-                  // bundle contains gold + array of item instances
                   const g = content.gold || 0;
                   const its = content.items || [];
                   setInventory((inv) => {
@@ -218,24 +264,124 @@ export default function GameScreen({ onExit }) {
                 return copy;
               });
             }
+          } else {
+            // if it's an enemy tile, start combat instead of moving
+            if (cell === "e") {
+              // find the enemy entity at that location
+              const enemyEnt = entitiesSnapshot.find(
+                (e) => e.type === "enemy" && e.x === nx && e.y === ny
+              );
+              if (enemyEnt) {
+                setCombat({
+                  enemyId: enemyEnt.id,
+                  enemyHp: 10,
+                  playerHp: 10,
+                  turn: "player",
+                  enemyPos: { x: nx, y: ny },
+                });
+              }
+            }
+            return;
           }
         }
       });
     });
 
+    // enemy AI system: wander (throttled)
+    const enemyPaths = new Map(); // enemyId -> { path: [[x,y],...], tick }
+    let engineTick = 0;
+    engine.registerSystem((entitiesSnapshot) => {
+      engineTick++;
+      const playerEnt = entitiesSnapshot.find((e) => e.type === "player");
+      const enemies = entitiesSnapshot.filter((e) => e.type === "enemy");
+      if (!enemies || enemies.length === 0) return;
+
+      enemies.forEach((en) => {
+        if (!en) return;
+        const speed = en.speed || 4;
+        const nextAt = en.nextMoveAt || 0;
+        if (engineTick < nextAt) return; // not time yet
+
+        // helper to check occupancy and walkable
+        function isWalkable(nx, ny) {
+          if (nx < 0 || ny < 0 || nx >= WIDTH || ny >= HEIGHT) return false;
+          const currentTiles = tilesRef.current || tiles;
+          const cell = currentTiles[ny] && currentTiles[ny][nx];
+          if (!cell) return false;
+          // disallow moving into walls, collidables, enemies, chests, etc.
+          if (cell === "#" || cell === "x" || cell === "e") return false;
+          if (!(cell === "." || cell === "d")) return false;
+          const occupied = entitiesSnapshot.find(
+            (o) => o.x === nx && o.y === ny && o.id !== en.id
+          );
+          if (occupied) return false;
+          return true;
+        }
+
+        // wander helper: try random adjacent direction
+        function tryWander() {
+          const dirs = [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ];
+          // shuffle
+          for (let i = dirs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+          }
+          for (const d of dirs) {
+            const nx = en.x + d[0];
+            const ny = en.y + d[1];
+            if (isWalkable(nx, ny)) {
+              // move enemy entity and update tiles; schedule next move
+              engine.updateEntity(en.id, {
+                x: nx,
+                y: ny,
+                nextMoveAt: engineTick + speed,
+              });
+              setTiles((prev) => {
+                const copy = prev.map((r) => r.slice());
+                if (copy[en.y] && copy[en.y][en.x] === "e")
+                  copy[en.y][en.x] = ".";
+                if (copy[ny] && copy[ny][nx] === ".") copy[ny][nx] = "e";
+                return copy;
+              });
+              return true;
+            }
+          }
+          return false;
+        }
+
+        // always wander for now (chase disabled)
+        tryWander();
+      });
+    });
+
     // watch player state and keep engine in sync (small sync loop)
-    const unwatch = setInterval(() => {
+    unwatchRef.current = setInterval(() => {
       // pull latest player entity from engine and mirror to local state
       const p = engine.getEntities().find((e) => e.type === "player");
       if (p) setPlayer({ x: p.x, y: p.y });
     }, 120);
+  }, [tiles]);
 
-    // cleanup on unmount
+  // ensure engine and sync interval are cleaned up only on unmount
+  useEffect(() => {
     return () => {
-      clearInterval(unwatch);
-      engine.stop();
+      if (unwatchRef.current) {
+        clearInterval(unwatchRef.current);
+        unwatchRef.current = null;
+      }
+      if (engineRef.current) {
+        try {
+          engineRef.current.stop();
+        } catch (e) {}
+        engineRef.current = null;
+      }
     };
-  }, [player, tiles]);
+  }, []);
 
   // smooth pulsing animation for gold tiles (placed after map init)
   useEffect(() => {
@@ -276,19 +422,138 @@ export default function GameScreen({ onExit }) {
   const miniWidth = WIDTH * miniTile;
   const miniHeight = HEIGHT * miniTile;
 
+  // camera start (top-left) for the visible VIEW window; used by EntitySprites
+  let camStartX = 0;
+  let camStartY = 0;
+
   function movePlayer(dx, dy) {
     // emit movement intent to engine (engine will validate and update)
+    if (combat) return; // block movement during combat
     if (engineRef.current)
       engineRef.current.emitIntent({ type: "move", dx, dy });
+  }
+
+  // tactical combat handlers
+  function endCombat(removeEnemy, enemyPosParam) {
+    const pos = enemyPosParam || (combat && combat.enemyPos);
+    if (engineRef.current) {
+      // If requested, remove the specific enemy id and any enemy entities at pos
+      if (removeEnemy && pos) {
+        try {
+          if (combat && combat.enemyId)
+            engineRef.current.removeEntity(combat.enemyId);
+        } catch (e) {}
+        try {
+          const ents = engineRef.current
+            .getEntities()
+            .filter(
+              (e) => e.type === "enemy" && e.x === pos.x && e.y === pos.y
+            );
+          ents.forEach((en) => {
+            try {
+              engineRef.current.removeEntity(en.id);
+            } catch (err) {}
+          });
+        } catch (e) {}
+      }
+
+      // Defensive sync: clear any 'e' tiles without backing enemy entity
+      try {
+        const remainingEnemies = new Set(
+          engineRef.current
+            .getEntities()
+            .filter((e) => e.type === "enemy")
+            .map((en) => `${en.x},${en.y}`)
+        );
+        setTiles((prev) => {
+          const copy = prev.map((r) => r.slice());
+          for (let y = 0; y < copy.length; y++) {
+            for (let x = 0; x < copy[y].length; x++) {
+              if (copy[y][x] === "e") {
+                const key = `${x},${y}`;
+                if (!remainingEnemies.has(key)) copy[y][x] = ".";
+              }
+            }
+          }
+          return copy;
+        });
+      } catch (e) {
+        // ignore sync errors
+      }
+    }
+    setCombat(null);
+  }
+
+  function handleAttack() {
+    if (!combat) return;
+    const pos = combat && combat.enemyPos;
+    // player attacks: 0-4 damage random
+    const dmg = Math.floor(Math.random() * 5);
+    // apply enemy damage using functional update to avoid stale reads
+    setCombat((prev) => {
+      if (!prev) return prev;
+      const newEnemyHp = Math.max(0, (prev.enemyHp || 0) - dmg);
+      const updated = { ...prev, enemyHp: newEnemyHp, turn: "enemy" };
+      if (newEnemyHp <= 0) {
+        // schedule cleanup with captured pos
+        setTimeout(() => endCombat(true, pos), 300);
+      } else {
+        // schedule enemy attack after brief delay
+        setTimeout(() => {
+          setCombat((prev2) => {
+            if (!prev2) return prev2;
+            const curPlayerHp =
+              typeof prev2.playerHp === "number" ? prev2.playerHp : 10;
+            const newPlayerHp = Math.max(0, curPlayerHp - 1);
+            const updated2 = {
+              ...prev2,
+              playerHp: newPlayerHp,
+              turn: "player",
+            };
+            if (newPlayerHp <= 0) {
+              setTimeout(() => endCombat(false, pos), 300);
+            }
+            return updated2;
+          });
+        }, 450);
+      }
+      return updated;
+    });
+  }
+
+  function handleDodge() {
+    if (!combat) return;
+    const pos = combat && combat.enemyPos;
+    // enemy attacks next: 50% chance to avoid damage
+    const avoided = Math.random() < 0.5;
+    if (avoided) {
+      // no damage
+      setCombat((c) => (c ? { ...c, turn: "player" } : c));
+    } else {
+      setCombat((prev) => {
+        if (!prev) return prev;
+        const curPlayerHp =
+          typeof prev.playerHp === "number" ? prev.playerHp : 10;
+        const newPlayerHp = Math.max(0, curPlayerHp - 1);
+        const updated = { ...prev, playerHp: newPlayerHp, turn: "player" };
+        if (newPlayerHp <= 0) setTimeout(() => endCombat(false, pos), 300);
+        return updated;
+      });
+    }
+  }
+
+  function handleFlee() {
+    // simple flee: end combat without removing enemy
+    endCombat(false, combat && combat.enemyPos);
   }
 
   // randomize the 4 red collidable tiles per section
   function randomizeRedObstacles() {
     setTiles((prev) => {
       if (!prev || prev.length === 0) return prev;
-      // deep copy and clear previous red obstacles
+      // deep copy and clear previous gray collidables 'x' and enemies 'e'
       const newTiles = prev.map((row) =>
-        row.map((cell) => (cell === "r" ? "." : cell))
+        row.map((cell) => (cell === "x" || cell === "e" ? "." : cell))
       );
 
       // Rebuild section boundary walls and randomize doorways along each wall
@@ -378,7 +643,7 @@ export default function GameScreen({ onExit }) {
         }
       }
 
-      // place red obstacles per section respecting forbidden set
+      // place gray collidable obstacles per section respecting forbidden set
       for (let sx = 0; sx < SECTIONS_X; sx++) {
         for (let sy = 0; sy < SECTIONS_Y; sy++) {
           let placed = 0;
@@ -393,12 +658,110 @@ export default function GameScreen({ onExit }) {
               newTiles[ry][rx] === "." &&
               !forbidden.has(`${rx},${ry}`)
             ) {
-              newTiles[ry][rx] = "r";
+              newTiles[ry][rx] = "x";
               placed++;
             }
             tries++;
           }
         }
+      }
+
+      // place one stationary enemy 'e' per section (avoid doorways)
+      for (let sx = 0; sx < SECTIONS_X; sx++) {
+        for (let sy = 0; sy < SECTIONS_Y; sy++) {
+          const startX = sx * SECTION_W;
+          const startY = sy * SECTION_H;
+          let tries = 0;
+          let placed = false;
+          while (!placed && tries < 500) {
+            const ex = startX + Math.floor(Math.random() * SECTION_W);
+            const ey = startY + Math.floor(Math.random() * SECTION_H);
+            if (newTiles[ey] && newTiles[ey][ex] === ".") {
+              // ensure not inside doorway 3x3
+              let nearDoor = false;
+              for (let dx = -1; dx <= 1 && !nearDoor; dx++) {
+                for (let dy = -1; dy <= 1 && !nearDoor; dy++) {
+                  const fx = ex + dx;
+                  const fy = ey + dy;
+                  if (
+                    fx >= 0 &&
+                    fx < WIDTH &&
+                    fy >= 0 &&
+                    fy < HEIGHT &&
+                    newTiles[fy][fx] === "d"
+                  )
+                    nearDoor = true;
+                }
+              }
+              if (!nearDoor) {
+                newTiles[ey][ex] = "e";
+                placed = true;
+              }
+            }
+            tries++;
+          }
+        }
+      }
+
+      // sync engine entities (remove old chests/enemies and recreate from tiles)
+      try {
+        const engine = engineRef.current;
+        if (engine) {
+          // remove old chests and enemies
+          const oldChests = engine.getEntitiesByType
+            ? engine.getEntitiesByType("chest")
+            : engine.getEntities().filter((e) => e.type === "chest");
+          oldChests.forEach((c) => engine.removeEntity(c.id));
+          const oldEnemies = engine.getEntitiesByType
+            ? engine.getEntitiesByType("enemy")
+            : engine.getEntities().filter((e) => e.type === "enemy");
+          oldEnemies.forEach((en) => engine.removeEntity(en.id));
+
+          // recreate from newTiles
+          for (let y = 0; y < HEIGHT; y++) {
+            for (let x = 0; x < WIDTH; x++) {
+              const cell = newTiles[y][x];
+              if (cell === "c") {
+                const chestUid = uid(10);
+                const goldAmount = Math.floor(Math.random() * 10) + 1;
+                const itemsInside = [];
+                const itemCount = Math.floor(Math.random() * 3);
+                const pool = itemTemplates.filter((t) => t.id !== "gold");
+                for (let k = 0; k < itemCount; k++) {
+                  const tpl = pool[Math.floor(Math.random() * pool.length)];
+                  itemsInside.push({
+                    instanceId: uid(10),
+                    templateId: tpl.id,
+                    qty: 1,
+                  });
+                }
+                engine.addEntity({
+                  type: "chest",
+                  x,
+                  y,
+                  uid: chestUid,
+                  content: {
+                    kind: "bundle",
+                    gold: goldAmount,
+                    items: itemsInside,
+                  },
+                });
+              } else if (cell === "e") {
+                engine.addEntity({
+                  type: "enemy",
+                  x,
+                  y,
+                  state: "wander",
+                  speed: 8,
+                  nextMoveAt: 8,
+                  detectRange: 6,
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // swallow sync errors
       }
 
       return newTiles;
@@ -483,16 +846,18 @@ export default function GameScreen({ onExit }) {
                 startX = Math.max(0, Math.min(startX, WIDTH - VIEW_W));
                 startY = Math.max(0, Math.min(startY, HEIGHT - VIEW_H));
                 return (
-                  <TileGrid
-                    tiles={tiles}
-                    player={player}
-                    VIEW_W={VIEW_W}
-                    VIEW_H={VIEW_H}
-                    startX={startX}
-                    startY={startY}
-                    size={effectiveTileSize}
-                    pulseAnim={pulseAnim}
-                  />
+                  <>
+                    <TileGrid
+                      tiles={tiles}
+                      player={player}
+                      VIEW_W={VIEW_W}
+                      VIEW_H={VIEW_H}
+                      startX={startX}
+                      startY={startY}
+                      size={effectiveTileSize}
+                      pulseAnim={pulseAnim}
+                    />
+                  </>
                 );
               })()
             : null}
@@ -517,6 +882,15 @@ export default function GameScreen({ onExit }) {
       ) : null}
 
       <DPad onMove={movePlayer} />
+      {combat ? (
+        <TacticalOverlay
+          playerHp={combat.playerHp}
+          enemyHp={combat.enemyHp}
+          onAttack={handleAttack}
+          onDodge={handleDodge}
+          onClose={handleFlee}
+        />
+      ) : null}
     </RN.SafeAreaView>
   );
 }

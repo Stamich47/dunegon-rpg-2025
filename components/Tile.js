@@ -25,8 +25,10 @@ export default function Tile({ cell, isPlayer, size, pulseAnim }) {
     ? colors.player
     : cell === "."
     ? colors.floor
-    : cell === "r"
+    : cell === "x"
     ? colors.collidable
+    : cell === "e"
+    ? colors.enemy
     : cell === "d"
     ? colors.floor
     : colors.wall;
