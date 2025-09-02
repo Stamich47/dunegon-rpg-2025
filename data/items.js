@@ -1,1 +1,54 @@
-export const items = [{ id: "gold", name: "Gold", icon: "💰" }];
+export const items = [
+  { id: "gold", name: "Gold", icon: "💰", stackable: true },
+  {
+    id: "potion",
+    name: "Health Potion",
+    icon: "🧪",
+    healing: 50,
+    stackable: true,
+  },
+  {
+    id: "hi_potion",
+    name: "Hi-Potion",
+    icon: "🧴",
+    healing: 150,
+    stackable: true,
+  },
+  {
+    id: "sword_1",
+    name: "Short Sword",
+    icon: "🗡️",
+    attack: 4,
+    equipSlot: "hand",
+  },
+  {
+    id: "longsword",
+    name: "Longsword",
+    icon: "⚔️",
+    attack: 8,
+    equipSlot: "hand",
+  },
+  {
+    id: "leather_armor",
+    name: "Leather Armor",
+    icon: "🥋",
+    defense: 3,
+    equipSlot: "body",
+  },
+  {
+    id: "chainmail",
+    name: "Chainmail",
+    icon: "🛡️",
+    defense: 7,
+    equipSlot: "body",
+  },
+  { id: "torch", name: "Torch", icon: "🔥", stackable: true, uses: 20 },
+  {
+    id: "key",
+    name: "Rusty Key",
+    icon: "🗝️",
+    stackable: false,
+    keyFor: "dungeon_gate",
+  },
+  { id: "elixir", name: "Elixir", icon: "✨", healing: 9999, stackable: false },
+];

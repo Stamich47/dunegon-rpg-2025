@@ -9,6 +9,8 @@ import {
 import * as RN from "react-native";
 import * as ROT from "rot-js";
 import createEngine from "./game/miniEngine";
+import { uid } from "./utils/id";
+import { items as itemTemplates } from "./data/items";
 import mapModule from "./game/map";
 import Minimap from "./components/Minimap";
 import CommonStyles, { colors } from "./styles/common";
@@ -22,7 +24,7 @@ export default function GameScreen({ onExit }) {
   const [player, setPlayer] = useState(null);
   const [legendOpen, setLegendOpen] = useState(false);
   const [invOpen, setInvOpen] = useState(false);
-  const [inventory, setInventory] = useState({ gold: 0 });
+  const [inventory, setInventory] = useState({ gold: 0, items: [] });
   const pulseAnim = useRef(new RN.Animated.Value(0)).current;
   const engineRef = useRef(null);
   // sections: screen is one section; there are 3x3 sections
@@ -82,8 +84,27 @@ export default function GameScreen({ onExit }) {
     tiles.forEach((row, y) => {
       row.forEach((cell, x) => {
         if (cell === "c") {
-          const amount = Math.floor(Math.random() * 10) + 1;
-          const cid = engine.addEntity({ type: "chest", x, y, amount });
+          // chest always contains some gold plus 0-2 random items
+          const chestUid = uid(10);
+          const goldAmount = Math.floor(Math.random() * 10) + 1;
+          const itemsInside = [];
+          const itemCount = Math.floor(Math.random() * 3); // 0,1,2
+          const pool = itemTemplates.filter((t) => t.id !== "gold");
+          for (let k = 0; k < itemCount; k++) {
+            const tpl = pool[Math.floor(Math.random() * pool.length)];
+            itemsInside.push({
+              instanceId: uid(10),
+              templateId: tpl.id,
+              qty: 1,
+            });
+          }
+          const cid = engine.addEntity({
+            type: "chest",
+            x,
+            y,
+            uid: chestUid,
+            content: { kind: "bundle", gold: goldAmount, items: itemsInside },
+          });
           chestIds.push(cid);
         }
       });
@@ -121,12 +142,73 @@ export default function GameScreen({ onExit }) {
                 (e) => e.type === "chest" && e.x === nx && e.y === ny
               );
               if (chestEnt) {
-                // award gold immediately
-                const amt = chestEnt.amount || 1;
-                setInventory((inv) => ({
-                  ...inv,
-                  gold: (inv.gold || 0) + amt,
-                }));
+                // chest content may be gold or item instance
+                const content = chestEnt.content;
+                if (!content) {
+                  // fallback: award 1
+                  setInventory((inv) => ({
+                    ...inv,
+                    gold: (inv.gold || 0) + 1,
+                  }));
+                } else if (content.kind === "gold") {
+                  setInventory((inv) => ({
+                    ...inv,
+                    gold: (inv.gold || 0) + (content.amount || 1),
+                  }));
+                } else if (content.kind === "item") {
+                  const instance = content.item;
+                  setInventory((inv) => {
+                    const items = inv.items ? [...inv.items] : [];
+                    const tpl =
+                      itemTemplates.find((t) => t.id === instance.templateId) ||
+                      {};
+                    if (tpl.stackable) {
+                      const idx = items.findIndex(
+                        (i) => i.templateId === instance.templateId
+                      );
+                      if (idx >= 0) {
+                        items[idx] = {
+                          ...items[idx],
+                          qty: (items[idx].qty || 0) + (instance.qty || 1),
+                        };
+                      } else {
+                        items.push({ ...instance });
+                      }
+                    } else {
+                      items.push({ ...instance });
+                    }
+                    return { ...inv, items };
+                  });
+                } else if (content.kind === "bundle") {
+                  // bundle contains gold + array of item instances
+                  const g = content.gold || 0;
+                  const its = content.items || [];
+                  setInventory((inv) => {
+                    const items = inv.items ? [...inv.items] : [];
+                    its.forEach((instance) => {
+                      const tpl =
+                        itemTemplates.find(
+                          (t) => t.id === instance.templateId
+                        ) || {};
+                      if (tpl.stackable) {
+                        const idx = items.findIndex(
+                          (i) => i.templateId === instance.templateId
+                        );
+                        if (idx >= 0) {
+                          items[idx] = {
+                            ...items[idx],
+                            qty: (items[idx].qty || 0) + (instance.qty || 1),
+                          };
+                        } else {
+                          items.push({ ...instance });
+                        }
+                      } else {
+                        items.push({ ...instance });
+                      }
+                    });
+                    return { ...inv, gold: (inv.gold || 0) + g, items };
+                  });
+                }
                 engine.removeEntity(chestEnt.id);
               }
               // clear tile visually
