@@ -73,17 +73,15 @@ export default function GameScreen({ onExit }) {
       vBoundaries.forEach((bx) => {
         for (let sy = 0; sy < SECTIONS_Y; sy++) {
           const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
-          const opens = [
-            [bx, oy],
-            [bx - 1, oy],
-            [bx + 1, oy],
-            [bx, oy - 1],
-            [bx, oy + 1],
-          ];
-          opens.forEach(([x, y]) => {
-            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-              forbidden.add(`${x},${y}`);
-          });
+          // add full 3x3 area around the doorway
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              const x = bx + dx;
+              const y = oy + dy;
+              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+                forbidden.add(`${x},${y}`);
+            }
+          }
         }
       });
       // horizontal boundaries openings
@@ -91,17 +89,15 @@ export default function GameScreen({ onExit }) {
       hBoundaries.forEach((by) => {
         for (let sx = 0; sx < SECTIONS_X; sx++) {
           const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
-          const opens = [
-            [ox, by],
-            [ox - 1, by],
-            [ox + 1, by],
-            [ox, by - 1],
-            [ox, by + 1],
-          ];
-          opens.forEach(([x, y]) => {
-            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-              forbidden.add(`${x},${y}`);
-          });
+          // add full 3x3 area around the doorway
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              const x = ox + dx;
+              const y = by + dy;
+              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+                forbidden.add(`${x},${y}`);
+            }
+          }
         }
       });
 
@@ -194,34 +190,30 @@ export default function GameScreen({ onExit }) {
       vBoundaries.forEach((bx) => {
         for (let sy = 0; sy < SECTIONS_Y; sy++) {
           const oy = sy * SECTION_H + Math.floor(SECTION_H / 2);
-          const opens = [
-            [bx, oy],
-            [bx - 1, oy],
-            [bx + 1, oy],
-            [bx, oy - 1],
-            [bx, oy + 1],
-          ];
-          opens.forEach(([x, y]) => {
-            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-              forbidden.add(`${x},${y}`);
-          });
+          // add full 3x3 area around the doorway
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              const x = bx + dx;
+              const y = oy + dy;
+              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+                forbidden.add(`${x},${y}`);
+            }
+          }
         }
       });
       const hBoundaries = [SECTION_H, SECTION_H * 2];
       hBoundaries.forEach((by) => {
         for (let sx = 0; sx < SECTIONS_X; sx++) {
           const ox = sx * SECTION_W + Math.floor(SECTION_W / 2);
-          const opens = [
-            [ox, by],
-            [ox - 1, by],
-            [ox + 1, by],
-            [ox, by - 1],
-            [ox, by + 1],
-          ];
-          opens.forEach(([x, y]) => {
-            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
-              forbidden.add(`${x},${y}`);
-          });
+          // add full 3x3 area around the doorway
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              const x = ox + dx;
+              const y = by + dy;
+              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT)
+                forbidden.add(`${x},${y}`);
+            }
+          }
         }
       });
 
