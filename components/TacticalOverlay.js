@@ -3,13 +3,16 @@ import { View, Text, TouchableOpacity, Animated } from "react-native";
 
 export default function TacticalOverlay({
   playerHp,
+  playerMaxHp = 10,
   enemyHp,
+  enemyMaxHp = 10,
   onAttack,
   onDodge,
   onClose,
   message,
   playerHitSignal = 0,
   enemyHitSignal = 0,
+  turn = "player",
 }) {
   const playerGlow = useRef(new Animated.Value(0)).current;
   const enemyGlow = useRef(new Animated.Value(0)).current;
@@ -103,14 +106,16 @@ export default function TacticalOverlay({
           >
             <View
               style={{
-                width: `${(playerHp / 10) * 100}%`,
+                width: `${
+                  (Math.max(0, playerHp) / Math.max(1, playerMaxHp)) * 100
+                }%`,
                 height: "100%",
                 backgroundColor: "#84cc16",
               }}
             />
           </View>
           <Text style={{ color: "#fff", marginTop: 6 }}>
-            {playerHp} / 10 HP
+            {playerHp} / {playerMaxHp} HP
           </Text>
         </View>
 
@@ -150,13 +155,17 @@ export default function TacticalOverlay({
           >
             <View
               style={{
-                width: `${(enemyHp / 10) * 100}%`,
+                width: `${
+                  (Math.max(0, enemyHp) / Math.max(1, enemyMaxHp)) * 100
+                }%`,
                 height: "100%",
                 backgroundColor: "#f87171",
               }}
             />
           </View>
-          <Text style={{ color: "#fff", marginTop: 6 }}>{enemyHp} / 10 HP</Text>
+          <Text style={{ color: "#fff", marginTop: 6 }}>
+            {enemyHp} / {enemyMaxHp} HP
+          </Text>
         </View>
       </View>
 
@@ -169,19 +178,25 @@ export default function TacticalOverlay({
 
       <View style={{ marginTop: 12, flexDirection: "row", gap: 12 }}>
         <TouchableOpacity
-          onPress={onAttack}
+          onPress={turn === "player" ? onAttack : undefined}
           style={{
             padding: 12,
-            backgroundColor: "#059669",
+            backgroundColor: turn === "player" ? "#059669" : "#065f46",
             borderRadius: 8,
             marginRight: 8,
+            opacity: turn === "player" ? 1 : 0.6,
           }}
         >
           <Text style={{ color: "#fff" }}>Attack</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={onDodge}
-          style={{ padding: 12, backgroundColor: "#b45309", borderRadius: 8 }}
+          onPress={turn === "player" ? onDodge : undefined}
+          style={{
+            padding: 12,
+            backgroundColor: turn === "player" ? "#b45309" : "#92400e",
+            borderRadius: 8,
+            opacity: turn === "player" ? 1 : 0.6,
+          }}
         >
           <Text style={{ color: "#fff" }}>Dodge</Text>
         </TouchableOpacity>

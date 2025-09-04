@@ -11,6 +11,7 @@ import * as ROT from "rot-js";
 import createEngine from "./game/miniEngine";
 import { uid } from "./utils/id";
 import { items as itemTemplates } from "./data/items";
+import enemyTemplates from "./data/enemies";
 import mapModule from "./game/map";
 import Minimap from "./components/Minimap";
 import CommonStyles, { colors } from "./styles/common";
@@ -140,17 +141,23 @@ export default function GameScreen({ onExit }) {
     tiles.forEach((row, y) => {
       row.forEach((cell, x) => {
         if (cell === "e") {
+          const tpl =
+            enemyTemplates[Math.floor(Math.random() * enemyTemplates.length)];
           const eid = engine.addEntity({
             type: "enemy",
             x,
             y,
             state: "wander",
-            speed: ticksPerSecond, // move ~once per second
-            nextMoveAt: ticksPerSecond, // schedule first move after initial delay
-            detectRange: 6, // retained but unused while chase disabled
+            templateId: tpl.id,
+            hp: tpl.hp,
+            attack: tpl.attack,
+            defense: tpl.defense,
+            speed: tpl.speed || ticksPerSecond, // move ~once per second
+            nextMoveAt: tpl.speed || ticksPerSecond, // schedule first move after initial delay
+            detectRange: tpl.detectRange || 6, // retained but unused while chase disabled
           });
           enemyIds.push(eid);
-          console.log(`[Engine] spawned enemy ${eid} at ${x},${y}`);
+          console.log(`[Engine] spawned enemy ${eid} (${tpl.id}) at ${x},${y}`);
         }
       });
     });
@@ -187,8 +194,16 @@ export default function GameScreen({ onExit }) {
           if (enemyHere) {
             setCombat({
               enemyId: enemyHere.id,
-              enemyHp: 10,
-              playerHp: 10,
+              enemyHp: typeof enemyHere.hp === "number" ? enemyHere.hp : 10,
+              enemyMaxHp: typeof enemyHere.hp === "number" ? enemyHere.hp : 10,
+              enemyAttack:
+                typeof enemyHere.attack === "number" ? enemyHere.attack : 1,
+              enemyDefense:
+                typeof enemyHere.defense === "number" ? enemyHere.defense : 0,
+              playerHp:
+                playerStats && playerStats.maxHp ? playerStats.maxHp : 10,
+              playerMaxHp:
+                playerStats && playerStats.maxHp ? playerStats.maxHp : 10,
               turn: "player",
               enemyPos: { x: nx, y: ny },
             });
@@ -287,8 +302,17 @@ export default function GameScreen({ onExit }) {
               if (enemyEnt) {
                 setCombat({
                   enemyId: enemyEnt.id,
-                  enemyHp: 10,
-                  playerHp: 10,
+                  enemyHp: typeof enemyEnt.hp === "number" ? enemyEnt.hp : 10,
+                  enemyMaxHp:
+                    typeof enemyEnt.hp === "number" ? enemyEnt.hp : 10,
+                  enemyAttack:
+                    typeof enemyEnt.attack === "number" ? enemyEnt.attack : 1,
+                  enemyDefense:
+                    typeof enemyEnt.defense === "number" ? enemyEnt.defense : 0,
+                  playerHp:
+                    playerStats && playerStats.maxHp ? playerStats.maxHp : 10,
+                  playerMaxHp:
+                    playerStats && playerStats.maxHp ? playerStats.maxHp : 10,
                   turn: "player",
                   enemyPos: { x: nx, y: ny },
                 });
@@ -546,6 +570,7 @@ export default function GameScreen({ onExit }) {
 
   function handleAttack() {
     if (!combat) return;
+    if (combat.turn && combat.turn !== "player") return; // prevent acting when it's enemy's turn
     const pos = combat && combat.enemyPos;
     // player attacks: base random plus weapon bonus
     const weaponTpl = playerStats.weapon
@@ -569,13 +594,14 @@ export default function GameScreen({ onExit }) {
       } else {
         // schedule enemy attack after 2s delay so player can act again immediately
         setTimeout(() => {
-          const enemyAtk = 1;
+          const enemyAtk = prev.enemyAttack || 1;
+          const enemyDef = prev.enemyDefense || 0;
           const armorTpl = playerStats.armor
             ? itemTemplates.find((t) => t.id === playerStats.armor.templateId)
             : null;
           const armorBonus =
             armorTpl && armorTpl.defense ? armorTpl.defense : 0;
-          const raw = Math.max(0, enemyAtk - armorBonus);
+          const raw = Math.max(0, enemyAtk - armorBonus - (enemyDef || 0));
           setCombat((prev2) => {
             if (!prev2) return prev2;
             // if enemy already dead, skip
@@ -607,6 +633,7 @@ export default function GameScreen({ onExit }) {
 
   function handleDodge() {
     if (!combat) return;
+    if (combat.turn && combat.turn !== "player") return; // only allow dodge on player's turn
     const pos = combat && combat.enemyPos;
     // schedule enemy attack after 2s so player can act immediately
     setTimeout(() => {
@@ -618,12 +645,13 @@ export default function GameScreen({ onExit }) {
         setTimeout(() => setCombatMessage(null), 1000);
         return;
       }
-      const enemyAtk = 1;
+      const enemyAtk = (combat && combat.enemyAttack) || 1;
+      const enemyDef = (combat && combat.enemyDefense) || 0;
       const armorTpl = playerStats.armor
         ? itemTemplates.find((t) => t.id === playerStats.armor.templateId)
         : null;
       const armorBonus = armorTpl && armorTpl.defense ? armorTpl.defense : 0;
-      const raw = Math.max(0, enemyAtk - armorBonus);
+      const raw = Math.max(0, enemyAtk - armorBonus - (enemyDef || 0));
       setCombat((prev) => {
         if (!prev) return prev;
         const curPlayerHp =
@@ -843,14 +871,23 @@ export default function GameScreen({ onExit }) {
                   },
                 });
               } else if (cell === "e") {
+                // pick a random enemy template
+                const tpl =
+                  enemyTemplates[
+                    Math.floor(Math.random() * enemyTemplates.length)
+                  ];
                 engine.addEntity({
                   type: "enemy",
                   x,
                   y,
                   state: "wander",
-                  speed: 8,
-                  nextMoveAt: 8,
-                  detectRange: 6,
+                  templateId: tpl.id,
+                  hp: tpl.hp,
+                  attack: tpl.attack,
+                  defense: tpl.defense,
+                  speed: tpl.speed || 8,
+                  nextMoveAt: tpl.speed || 8,
+                  detectRange: tpl.detectRange || 6,
                 });
               }
             }
@@ -983,7 +1020,10 @@ export default function GameScreen({ onExit }) {
       {combat ? (
         <TacticalOverlay
           playerHp={combat.playerHp}
+          playerMaxHp={combat.playerMaxHp}
           enemyHp={combat.enemyHp}
+          enemyMaxHp={combat.enemyMaxHp}
+          turn={combat.turn}
           onAttack={handleAttack}
           onDodge={handleDodge}
           onClose={handleFlee}
